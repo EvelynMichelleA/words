@@ -1,0 +1,101 @@
+import datetime
+import requests
+from bs4 import BeautifulSoup
+from collections import Counter
+import matplotlib.pyplot as plt
+import pandas as pd
+from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
+
+base = datetime.date(2023, 1, 1)
+date_list = [base + datetime.timedelta(days=x) for x in range(1)]
+
+kumpulan_link = []
+kumpulan_paragraf = []
+
+for date in date_list:
+    page = 1
+    while True:
+        url = f'https://www.tribunnews.com/index-news?date={date.strftime("%Y-%m-%d")}&page={page}'
+        print(f"Mengakses URL: {url}")
+
+        try:
+            req = requests.get(url)
+            if req.status_code == 404:
+                print(f"Halaman {page} tidak ditemukan pada tanggal {date}. Berhenti.")
+                break
+            req.raise_for_status()
+            soup = BeautifulSoup(req.text, 'lxml')
+
+            article_titles = soup.select('div.lsi h3 a, a.f20')
+            if not article_titles:
+                article_titles = soup.select('h3 a')
+
+            print(f"Ditemukan {len(article_titles)} artikel di halaman {page}.")
+
+            if not article_titles:
+                break
+
+            for link in article_titles:
+                href = link.get('href')
+                if href and href not in kumpulan_link:
+                    kumpulan_link.append(href)
+                    print(f"Menambahkan artikel: {href}")
+
+            page += 1
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching {url}: {e}")
+            break
+
+print(f"Total link artikel yang dikumpulkan: {len(kumpulan_link)}")
+
+for i, link in enumerate(kumpulan_link):
+    try:
+        print(f"Memproses artikel {i + 1}/{len(kumpulan_link)}: {link}")
+        halaman = requests.get(link)
+        halaman.raise_for_status()
+        soup_baru = BeautifulSoup(halaman.text, 'lxml')
+
+        article_content = soup_baru.find('div', {'class': 'txt-article'})
+
+        if article_content:
+            paragraf = article_content.find_all('p')
+            for kalimat in paragraf:
+                text = kalimat.text.strip()
+                if text:
+                    kumpulan_paragraf.append(text)
+        else:
+            print(f"Tidak dapat menemukan konten artikel di {link}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {link}: {e}")
+
+print(f"Total paragraf yang dikumpulkan: {len(kumpulan_paragraf)}")
+
+with open('paragraf.txt', 'w', encoding="utf-8") as f:
+    for paragraf in kumpulan_paragraf:
+        f.writelines(paragraf + '\n')
+
+# Analisis teks
+words = ' '.join(kumpulan_paragraf).split()
+factory = StopWordRemoverFactory()
+stop_words = factory.get_stop_words() + [
+    'juga:', 'baca', 'copyright', '2008', '-', '2023', 'pt.', 'tribunnews', 'cyber', '(1/1/2023)', 'melakukan', 'baru', 'sabtu' ,
+    'media', '(tribun', 'digital', 'group).', 'all', 'rights', 'reserved.', '2022', '1', 'banyak', 'beberapa', '(1/1/2023).',
+    'segera', 'lengkapi', 'data', 'dirimu', 'untuk', 'ikutan', 'program', '#jernihberkomentar.', 'tersebut', 'menjadi', 'kata', 'orang',
+    'tribunnews.com', 'jakarta', 'tribunnews.com,', 'hingga', 'lebih', 'itu', 'uang','lebih','kata','tahun', 'satu', 'itu,', 'tak', 'ka', 'vs', 'hari',
+    'minggu', 'januari'
+]
+
+filtered_words = [word for word in words if word.lower() not in stop_words]
+filtered_word_freq = Counter(filtered_words)
+filtered_word_freq_df = pd.DataFrame(list(filtered_word_freq.items()), columns=['word', 'frequency'])
+filtered_word_freq_df = filtered_word_freq_df.sort_values(by='frequency', ascending=False)
+
+top_filtered_words = filtered_word_freq_df.head(10)
+plt.figure(figsize=(12, 6))
+plt.bar(top_filtered_words['word'], top_filtered_words['frequency'])
+plt.xlabel('Kata')
+plt.ylabel('Frekuensi')
+plt.title('10 Kata Paling Sering Muncul setelah Penghilangan dan Penambahan Stop Words dalam Artikel')
+plt.show()
